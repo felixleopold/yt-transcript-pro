@@ -1,0 +1,15 @@
+# Ignore OS files
+.DS_Store
+
+# Ignore the original extension source
+youtube-transcript-copier@dislikelever.com/
+
+# Editor config
+*.swp
+*.swo
+*~
+
+# Packaged extension
+*.xpi
+*.zip
+web-ext-artifacts/
