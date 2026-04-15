@@ -125,13 +125,27 @@
         user-select: none;
         transition: background-color 0.2s, opacity 0.2s;
 
-        /* Adapts to light / dark automatically */
-        background-color: var(--yt-spec-badge-chip-background, #0000000d);
+        /* Fallback for light mode (YouTube sets the variable in both modes) */
+        background-color: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.06));
         color: var(--yt-spec-text-primary, #0f0f0f);
       }
 
+      /* Dark mode fallback when YouTube CSS variables are not yet set */
+      @media (prefers-color-scheme: dark) {
+        .ytp-btn {
+          background-color: var(--yt-spec-badge-chip-background, rgba(255, 255, 255, 0.1));
+          color: var(--yt-spec-text-primary, #fff);
+        }
+      }
+
       .ytp-btn:hover {
-        background-color: var(--yt-spec-button-chip-background-hover, #00000014);
+        background-color: var(--yt-spec-button-chip-background-hover, rgba(0, 0, 0, 0.12));
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .ytp-btn:hover {
+          background-color: var(--yt-spec-button-chip-background-hover, rgba(255, 255, 255, 0.15));
+        }
       }
 
       .ytp-btn:disabled {
@@ -149,7 +163,13 @@
       .ytp-btn--settings {
         border-radius: 0 18px 18px 0;
         padding: 0 10px;
-        border-left: 1px solid var(--yt-spec-10-percent-layer, #0000001a);
+        border-left: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .ytp-btn--settings {
+          border-left-color: var(--yt-spec-10-percent-layer, rgba(255, 255, 255, 0.15));
+        }
       }
 
       .ytp-btn--settings svg {
