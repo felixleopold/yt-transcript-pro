@@ -13,3 +13,4 @@ youtube-transcript-copier@dislikelever.com/
 *.xpi
 *.zip
 web-ext-artifacts/
+PRIVATE_README.md

@@ -8,7 +8,7 @@
   // Constants & defaults
   // ---------------------------------------------------------------------------
 
-  const STORAGE_KEY = "yt-transcript-pro-settings";
+  const STORAGE_KEY = "yt-transcript-summary-settings";
 
   const DEFAULT_SETTINGS = {
     includeTitle: true,
@@ -16,7 +16,41 @@
     includeTimestamps: true,
     useParagraphs: false,
     copyAsMarkdown: false,
+    aiProvider: "openai",
+    aiApiKey: "",
+    aiModel: "",
+    summarySystemPrompt: [
+      "You are an expert content analyst specializing in video summarization.",
+      "Analyze the following YouTube video based on its transcript and description,",
+      "then produce a comprehensive summary in Markdown format.",
+      "",
+      "Your summary should include:",
+      "",
+      "1. **Overview** \u2013 A 2-3 sentence high-level summary of the video.",
+      "2. **Key Points** \u2013 Bulleted list of the most important topics covered.",
+      "3. **Notable Details** \u2013 Interesting facts, quotes, statistics, or examples.",
+      "4. **Takeaways** \u2013 Actionable insights or conclusions to remember.",
+      "",
+      "Guidelines:",
+      "- Be concise but thorough \u2014 capture the substance without filler.",
+      "- Use clear, professional language.",
+      "- Preserve technical terms and proper nouns from the original content.",
+      "- Structure output for easy scanning with headers and bullet points.",
+      "- For tutorials, include key steps. For discussions, present different perspectives.",
+      "- Output only the summary \u2014 no preamble or meta-commentary.",
+    ].join("\n"),
+    summaryOutput: "clipboard",
   };
+
+  const DEFAULT_MODELS = {
+    openai: "gpt-4o-mini",
+    anthropic: "claude-sonnet-4-6",
+    google: "gemini-2.0-flash",
+    groq: "llama-3.3-70b-versatile",
+    openrouter: "anthropic/claude-sonnet-4-6",
+  };
+
+  const modelCache = {};
 
   // ---------------------------------------------------------------------------
   // State
@@ -30,7 +64,7 @@
   let urlChangeTimer = null;
 
   const MAX_RETRIES = 5;
-  const CONTAINER_ID = "yt-transcript-pro-container";
+  const CONTAINER_ID = "yt-transcript-summary-container";
 
   // ---------------------------------------------------------------------------
   // Settings persistence (chrome.storage.sync → localStorage fallback)
@@ -95,10 +129,10 @@
   // ---------------------------------------------------------------------------
 
   function injectStyles() {
-    if (document.getElementById("yt-transcript-pro-styles")) return;
+    if (document.getElementById("yt-transcript-summary-styles")) return;
 
     const style = document.createElement("style");
-    style.id = "yt-transcript-pro-styles";
+    style.id = "yt-transcript-summary-styles";
     style.textContent = /* css */ `
       /* ── Container ─────────────────────────────────────────── */
       #${CONTAINER_ID} {
@@ -196,6 +230,8 @@
         padding: 24px;
         width: 90%;
         max-width: 440px;
+        max-height: 80vh;
+        overflow-y: auto;
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
         font-family: "Roboto", "Arial", sans-serif;
       }
@@ -250,6 +286,288 @@
       .ytp-toggle:checked::before {
         transform: translateX(20px);
       }
+
+      /* ── Summarize button (middle pill) ──────────────────────── */
+      .ytp-btn--summarize {
+        border-radius: 0;
+        padding: 0 12px;
+        border-left: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .ytp-btn--summarize {
+          border-left-color: var(--yt-spec-10-percent-layer, rgba(255, 255, 255, 0.15));
+        }
+      }
+
+      /* ── Settings section heading ────────────────────────────── */
+      .ytp-section-heading {
+        font-size: 13px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        opacity: 0.6;
+        margin: 16px 0 8px;
+        padding-top: 12px;
+        border-top: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+      }
+
+      /* ── Form controls ───────────────────────────────────────── */
+      .ytp-setting select,
+      .ytp-setting input[type="text"],
+      .ytp-setting input[type="password"] {
+        font-size: 13px;
+        font-family: "Roboto", "Arial", sans-serif;
+        padding: 6px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.2));
+        background: var(--yt-spec-base-background, #fff);
+        color: var(--yt-spec-text-primary, #0f0f0f);
+        outline: none;
+        min-width: 160px;
+      }
+
+      .ytp-setting select:focus,
+      .ytp-setting input[type="text"]:focus,
+      .ytp-setting input[type="password"]:focus {
+        border-color: #3ea6ff;
+      }
+
+      .ytp-setting textarea {
+        font-size: 13px;
+        font-family: "Roboto", "Arial", sans-serif;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.2));
+        background: var(--yt-spec-base-background, #fff);
+        color: var(--yt-spec-text-primary, #0f0f0f);
+        outline: none;
+        width: 100%;
+        min-height: 80px;
+        resize: vertical;
+        box-sizing: border-box;
+      }
+
+      .ytp-setting textarea:focus {
+        border-color: #3ea6ff;
+      }
+
+      .ytp-setting--full {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+      }
+
+      .ytp-model-row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+
+      .ytp-model-row select {
+        flex: 1;
+      }
+
+      .ytp-refresh-btn {
+        background: none;
+        border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.2));
+        border-radius: 8px;
+        padding: 5px 8px;
+        cursor: pointer;
+        color: var(--yt-spec-text-primary, #0f0f0f);
+        font-size: 14px;
+        line-height: 1;
+      }
+
+      .ytp-refresh-btn:hover {
+        background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.06));
+      }
+
+      .ytp-refresh-btn:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      /* ── Summary display panel ───────────────────────────────── */
+      #ytp-summary-panel {
+        margin: 12px 0;
+        padding: 16px;
+        border-radius: 12px;
+        background: var(--yt-spec-base-background, #fff);
+        color: var(--yt-spec-text-primary, #0f0f0f);
+        border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+        font-family: "Roboto", "Arial", sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+        position: relative;
+      }
+
+      #ytp-summary-panel .ytp-summary-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+
+      #ytp-summary-panel .ytp-summary-header h3 {
+        margin: 0;
+        font-size: 16px;
+      }
+
+      #ytp-summary-panel .ytp-summary-close {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 20px;
+        color: var(--yt-spec-text-primary, #0f0f0f);
+        opacity: 0.7;
+        padding: 4px 8px;
+      }
+
+      #ytp-summary-panel .ytp-summary-close:hover {
+        opacity: 1;
+      }
+
+      #ytp-summary-panel .ytp-summary-content {
+        overflow-wrap: break-word;
+      }
+
+      #ytp-summary-panel .ytp-summary-content h1,
+      #ytp-summary-panel .ytp-summary-content h2,
+      #ytp-summary-panel .ytp-summary-content h3,
+      #ytp-summary-panel .ytp-summary-content h4 {
+        margin: 14px 0 6px;
+      }
+
+      #ytp-summary-panel .ytp-summary-content h1 { font-size: 18px; }
+      #ytp-summary-panel .ytp-summary-content h2 { font-size: 16px; }
+      #ytp-summary-panel .ytp-summary-content h3 { font-size: 15px; }
+      #ytp-summary-panel .ytp-summary-content h4 { font-size: 14px; font-weight: 600; }
+
+      #ytp-summary-panel .ytp-summary-content ul,
+      #ytp-summary-panel .ytp-summary-content ol {
+        margin: 8px 0;
+        padding-left: 24px;
+      }
+
+      #ytp-summary-panel .ytp-summary-content li {
+        margin: 3px 0;
+      }
+
+      #ytp-summary-panel .ytp-summary-content p {
+        margin: 8px 0;
+      }
+
+      #ytp-summary-panel .ytp-summary-content a {
+        color: #3ea6ff;
+        text-decoration: none;
+      }
+
+      #ytp-summary-panel .ytp-summary-content a:hover {
+        text-decoration: underline;
+      }
+
+      #ytp-summary-panel .ytp-summary-content table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 12px 0;
+        font-size: 13px;
+      }
+
+      #ytp-summary-panel .ytp-summary-content th,
+      #ytp-summary-panel .ytp-summary-content td {
+        border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.15));
+        padding: 8px 10px;
+        text-align: left;
+      }
+
+      #ytp-summary-panel .ytp-summary-content th {
+        background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.06));
+        font-weight: 600;
+      }
+
+      #ytp-summary-panel .ytp-summary-content blockquote {
+        margin: 10px 0;
+        padding: 4px 14px;
+        border-left: 3px solid #3ea6ff;
+        background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.03));
+      }
+
+      #ytp-summary-panel .ytp-summary-content blockquote p {
+        margin: 4px 0;
+      }
+
+      #ytp-summary-panel .ytp-summary-content hr {
+        border: none;
+        border-top: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.12));
+        margin: 14px 0;
+      }
+
+      #ytp-summary-panel .ytp-summary-content pre {
+        background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.06));
+        padding: 12px;
+        border-radius: 8px;
+        overflow-x: auto;
+        margin: 10px 0;
+      }
+
+      #ytp-summary-panel .ytp-summary-content code {
+        font-family: "Consolas", "Monaco", monospace;
+        font-size: 12px;
+      }
+
+      #ytp-summary-panel .ytp-summary-content p code,
+      #ytp-summary-panel .ytp-summary-content li code {
+        background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.06));
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+
+      /* ── Collapsible content ─────────────────────────────────── */
+      #ytp-summary-panel .ytp-summary-content.ytp-collapsed {
+        max-height: 400px;
+        overflow: hidden;
+        position: relative;
+      }
+
+      #ytp-summary-panel .ytp-summary-content.ytp-collapsed::after {
+        content: "";
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 80px;
+        background: linear-gradient(transparent, var(--yt-spec-base-background, #fff));
+        pointer-events: none;
+      }
+
+      #ytp-summary-panel .ytp-expand-btn {
+        display: block;
+        width: 100%;
+        padding: 8px 0;
+        margin-top: 4px;
+        border: none;
+        background: none;
+        color: #3ea6ff;
+        font-size: 13px;
+        font-family: "Roboto", "Arial", sans-serif;
+        font-weight: 500;
+        cursor: pointer;
+        text-align: center;
+      }
+
+      #ytp-summary-panel .ytp-expand-btn:hover {
+        text-decoration: underline;
+      }
+
+      /* ── Icon buttons in header ──────────────────────────────── */
+      #ytp-summary-panel .ytp-summary-close svg {
+        width: 18px;
+        height: 18px;
+        fill: currentColor;
+        vertical-align: middle;
+      }
     `;
     document.head.appendChild(style);
   }
@@ -257,6 +575,18 @@
   // ---------------------------------------------------------------------------
   // DOM helpers
   // ---------------------------------------------------------------------------
+
+  function safeSetSVG(el, svgString) {
+    const doc = new DOMParser().parseFromString(svgString, "image/svg+xml");
+    el.replaceChildren(document.adoptNode(doc.documentElement));
+  }
+
+  function safeSetHTML(el, htmlString) {
+    const doc = new DOMParser().parseFromString(htmlString, "text/html");
+    const frag = document.createDocumentFragment();
+    while (doc.body.firstChild) frag.appendChild(document.adoptNode(doc.body.firstChild));
+    el.replaceChildren(frag);
+  }
 
   function waitForElement(selector, timeout = 6000) {
     return new Promise((resolve) => {
@@ -334,7 +664,15 @@
     settingsBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1a.49.49 0 0 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65zM12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5z"/></svg>`;
     settingsBtn.addEventListener("click", openSettingsModal);
 
-    container.append(copyBtn, settingsBtn);
+    // Summarize button
+    const summarizeBtn = document.createElement("button");
+    summarizeBtn.className = "ytp-btn ytp-btn--summarize";
+    summarizeBtn.textContent = "Summarize";
+    summarizeBtn.type = "button";
+    summarizeBtn.setAttribute("aria-label", "Summarize video with AI");
+    summarizeBtn.addEventListener("click", handleSummarize);
+
+    container.append(copyBtn, summarizeBtn, settingsBtn);
     target.parentNode.insertBefore(container, target.nextSibling);
 
     // Watch for removal so we can re-inject on next check
@@ -367,7 +705,8 @@
     const modal = document.createElement("div");
     modal.className = "ytp-modal";
     modal.innerHTML = `
-      <h2>Transcript Settings</h2>
+      <h2>Settings</h2>
+      <div class="ytp-section-heading" style="margin-top:0;padding-top:0;border-top:none;">Transcript</div>
       <div class="ytp-setting">
         <label for="ytp-includeTitle">Include video title</label>
         <input type="checkbox" id="ytp-includeTitle" class="ytp-toggle">
@@ -387,6 +726,41 @@
       <div class="ytp-setting">
         <label for="ytp-copyAsMarkdown">Copy as Markdown</label>
         <input type="checkbox" id="ytp-copyAsMarkdown" class="ytp-toggle">
+      </div>
+      <div class="ytp-section-heading">AI Summary</div>
+      <div class="ytp-setting">
+        <label for="ytp-aiProvider">Provider</label>
+        <select id="ytp-aiProvider">
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="google">Google Gemini</option>
+          <option value="groq">Groq</option>
+          <option value="openrouter">OpenRouter</option>
+        </select>
+      </div>
+      <div class="ytp-setting">
+        <label for="ytp-aiApiKey">API Key</label>
+        <input type="password" id="ytp-aiApiKey" placeholder="Enter API key" autocomplete="off">
+      </div>
+      <div class="ytp-setting">
+        <label for="ytp-aiModel">Model</label>
+        <div class="ytp-model-row">
+          <select id="ytp-aiModel">
+            <option value="">Default</option>
+          </select>
+          <button type="button" class="ytp-refresh-btn" id="ytp-refreshModels" title="Refresh models">\u21BB</button>
+        </div>
+      </div>
+      <div class="ytp-setting">
+        <label for="ytp-summaryOutput">Summary output</label>
+        <select id="ytp-summaryOutput">
+          <option value="clipboard">Copy to clipboard</option>
+          <option value="display">Display on page</option>
+        </select>
+      </div>
+      <div class="ytp-setting ytp-setting--full">
+        <label for="ytp-summarySystemPrompt">System prompt</label>
+        <textarea id="ytp-summarySystemPrompt" rows="4"></textarea>
       </div>
     `;
 
@@ -414,29 +788,116 @@
       document.getElementById("ytp-includeTimestamps").checked = s.includeTimestamps;
       document.getElementById("ytp-useParagraphs").checked = s.useParagraphs;
       document.getElementById("ytp-copyAsMarkdown").checked = s.copyAsMarkdown;
+      document.getElementById("ytp-aiProvider").value = s.aiProvider;
+      document.getElementById("ytp-aiApiKey").value = s.aiApiKey;
+      document.getElementById("ytp-summaryOutput").value = s.summaryOutput;
+      document.getElementById("ytp-summarySystemPrompt").value =
+        s.summarySystemPrompt;
+      populateModelDropdown(s.aiProvider, s.aiApiKey, s.aiModel);
     });
 
-    // Persist on change
-    modal.addEventListener("change", (e) => {
-      let includeTimestamps = document.getElementById("ytp-includeTimestamps").checked;
-      let useParagraphs = document.getElementById("ytp-useParagraphs").checked;
+    // Populate model dropdown from provider API
+    async function populateModelDropdown(provider, apiKey, currentModel) {
+      const select = document.getElementById("ytp-aiModel");
+      const refreshBtn = document.getElementById("ytp-refreshModels");
+      if (!select) return;
 
-      // Timestamps and paragraph are mutually exclusive
-      if (e.target.id === "ytp-useParagraphs" && useParagraphs) {
-        includeTimestamps = false;
-        document.getElementById("ytp-includeTimestamps").checked = false;
-      } else if (e.target.id === "ytp-includeTimestamps" && includeTimestamps) {
-        useParagraphs = false;
-        document.getElementById("ytp-useParagraphs").checked = false;
+      select.textContent = "";
+      const defaultOpt = document.createElement("option");
+      defaultOpt.value = "";
+      defaultOpt.textContent = `Default (${DEFAULT_MODELS[provider] || ""})`;
+      select.appendChild(defaultOpt);
+
+      if (!apiKey) return;
+
+      if (refreshBtn) {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = "\u2026";
       }
 
+      try {
+        const models = await fetchAvailableModels(provider, apiKey);
+        for (const m of models) {
+          const opt = document.createElement("option");
+          opt.value = m;
+          opt.textContent = m;
+          if (m === currentModel) opt.selected = true;
+          select.appendChild(opt);
+        }
+        if (currentModel && !models.includes(currentModel)) {
+          const opt = document.createElement("option");
+          opt.value = currentModel;
+          opt.textContent = currentModel;
+          opt.selected = true;
+          select.appendChild(opt);
+        }
+      } catch { /* silently fail */ }
+
+      if (refreshBtn) {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = "\u21BB";
+      }
+    }
+
+    // Refresh button
+    document.getElementById("ytp-refreshModels")?.addEventListener("click", () => {
+      const provider = document.getElementById("ytp-aiProvider").value;
+      const apiKey = document.getElementById("ytp-aiApiKey").value;
+      const current = document.getElementById("ytp-aiModel").value;
+      delete modelCache[`${provider}:${apiKey.slice(0, 8)}`];
+      populateModelDropdown(provider, apiKey, current);
+    });
+
+    // Collect all settings from the modal and persist
+    function collectAndSave() {
       saveSettings({
         includeTitle: document.getElementById("ytp-includeTitle").checked,
         includeUrl: document.getElementById("ytp-includeUrl").checked,
-        includeTimestamps,
-        useParagraphs,
+        includeTimestamps: document.getElementById("ytp-includeTimestamps").checked,
+        useParagraphs: document.getElementById("ytp-useParagraphs").checked,
         copyAsMarkdown: document.getElementById("ytp-copyAsMarkdown").checked,
+        aiProvider: document.getElementById("ytp-aiProvider").value,
+        aiApiKey: document.getElementById("ytp-aiApiKey").value,
+        aiModel: document.getElementById("ytp-aiModel").value,
+        summaryOutput: document.getElementById("ytp-summaryOutput").value,
+        summarySystemPrompt: document.getElementById("ytp-summarySystemPrompt").value,
       });
+    }
+
+    // Persist on change
+    modal.addEventListener("change", (e) => {
+      // Timestamps and paragraph are mutually exclusive
+      if (e.target.id === "ytp-useParagraphs" && e.target.checked) {
+        document.getElementById("ytp-includeTimestamps").checked = false;
+      } else if (e.target.id === "ytp-includeTimestamps" && e.target.checked) {
+        document.getElementById("ytp-useParagraphs").checked = false;
+      }
+
+      // Re-populate model dropdown when provider or API key changes
+      if (e.target.id === "ytp-aiProvider") {
+        const provider = e.target.value;
+        const apiKey = document.getElementById("ytp-aiApiKey").value;
+        populateModelDropdown(provider, apiKey, "");
+      }
+
+      collectAndSave();
+    });
+
+    // Also persist text/password inputs on typing
+    let apiKeyDebounce = null;
+    modal.addEventListener("input", (e) => {
+      if (e.target.matches("input[type=password], textarea")) {
+        collectAndSave();
+      }
+
+      // Re-fetch models when API key changes (debounced)
+      if (e.target.id === "ytp-aiApiKey") {
+        clearTimeout(apiKeyDebounce);
+        apiKeyDebounce = setTimeout(() => {
+          const provider = document.getElementById("ytp-aiProvider").value;
+          populateModelDropdown(provider, e.target.value, "");
+        }, 800);
+      }
     });
   }
 
@@ -462,7 +923,7 @@
       btn.textContent = "Copied!";
     } catch (err) {
       btn.textContent = "Error";
-      console.error("[YT Transcript Pro]", err);
+      console.error("[YT Transcript & Summary]", err);
       alert(`Could not copy transcript: ${err.message}`);
     } finally {
       setTimeout(() => {
@@ -517,6 +978,602 @@
       lines.push(transcript.map(([, text]) => text).join("\n\n"));
     }
     return lines.join("\n").trim();
+  }
+
+  // ---------------------------------------------------------------------------
+  // AI summary
+  // ---------------------------------------------------------------------------
+
+  async function handleSummarize() {
+    const btn = document.querySelector(`#${CONTAINER_ID} .ytp-btn--summarize`);
+    btn.textContent = "Summarizing\u2026";
+    btn.disabled = true;
+
+    try {
+      const settings = await getSettings();
+
+      if (!settings.aiApiKey) {
+        throw new Error(
+          "Please configure your API key in settings before summarizing."
+        );
+      }
+
+      const data = await fetchTranscript(location.href);
+      if (!data?.transcript?.length) throw new Error("Transcript unavailable.");
+
+      const description = getVideoDescription();
+      const transcriptText = data.transcript
+        .map(([, text]) => text)
+        .join(" ");
+
+      const userPrompt = [
+        `Video Title: ${data.title}`,
+        "",
+        "Video Description:",
+        description || "(No description available)",
+        "",
+        "Transcript:",
+        transcriptText,
+      ].join("\n");
+
+      const summary = await callAiProvider(
+        settings.aiProvider,
+        settings.aiApiKey,
+        settings.aiModel,
+        settings.summarySystemPrompt,
+        userPrompt
+      );
+
+      if (settings.summaryOutput === "display") {
+        displaySummaryPanel(summary);
+        btn.textContent = "Summarize";
+        btn.disabled = false;
+      } else {
+        await navigator.clipboard.writeText(summary);
+        btn.textContent = "Copied!";
+        setTimeout(() => {
+          btn.textContent = "Summarize";
+          btn.disabled = false;
+        }, 2000);
+      }
+    } catch (err) {
+      console.error("[YT Transcript & Summary]", err);
+      alert(`Could not summarize: ${err.message}`);
+      btn.textContent = "Summarize";
+      btn.disabled = false;
+    }
+  }
+
+  function getVideoDescription() {
+    const selectors = [
+      "#description-inline-expander yt-attributed-string",
+      "#description-inline-expander .yt-core-attributed-string",
+      "#description .yt-core-attributed-string",
+      "ytd-text-inline-expander .yt-core-attributed-string",
+      "#description yt-formatted-string",
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el?.textContent?.trim()) return el.textContent.trim();
+    }
+    return "";
+  }
+
+  async function callAiProvider(provider, apiKey, model, systemPrompt, userPrompt) {
+    const resolvedModel = model || DEFAULT_MODELS[provider] || "";
+
+    switch (provider) {
+      case "openai":
+        return callOpenAI(apiKey, resolvedModel, systemPrompt, userPrompt);
+      case "anthropic":
+        return callAnthropic(apiKey, resolvedModel, systemPrompt, userPrompt);
+      case "google":
+        return callGoogle(apiKey, resolvedModel, systemPrompt, userPrompt);
+      case "groq":
+        return callOpenAICompat(
+          "https://api.groq.com/openai/v1/chat/completions",
+          apiKey, resolvedModel, systemPrompt, userPrompt, "Groq"
+        );
+      case "openrouter":
+        return callOpenAICompat(
+          "https://openrouter.ai/api/v1/chat/completions",
+          apiKey, resolvedModel, systemPrompt, userPrompt, "OpenRouter"
+        );
+      default:
+        throw new Error(`Unknown provider: ${provider}`);
+    }
+  }
+
+  async function callOpenAI(apiKey, model, systemPrompt, userPrompt) {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `OpenAI API error: ${res.status}`);
+    }
+    const json = await res.json();
+    return json.choices?.[0]?.message?.content || "";
+  }
+
+  async function callAnthropic(apiKey, model, systemPrompt, userPrompt) {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userPrompt }],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(
+        err.error?.message || `Anthropic API error: ${res.status}`
+      );
+    }
+    const json = await res.json();
+    return json.content?.[0]?.text || "";
+  }
+
+  async function callGoogle(apiKey, model, systemPrompt, userPrompt) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ parts: [{ text: userPrompt }] }],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(
+        err.error?.message || `Google API error: ${res.status}`
+      );
+    }
+    const json = await res.json();
+    return json.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  }
+
+  async function callOpenAICompat(endpoint, apiKey, model, systemPrompt, userPrompt, label) {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `${label} API error: ${res.status}`);
+    }
+    const json = await res.json();
+    return json.choices?.[0]?.message?.content || "";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Model fetching
+  // ---------------------------------------------------------------------------
+
+  async function fetchAvailableModels(provider, apiKey, forceRefresh = false) {
+    if (!apiKey) return [];
+    const cacheKey = `${provider}:${apiKey.slice(0, 8)}`;
+    if (!forceRefresh && modelCache[cacheKey]) return modelCache[cacheKey];
+
+    let models = [];
+    try {
+      switch (provider) {
+        case "openai":
+          models = await fetchOpenAIModels(apiKey);
+          break;
+        case "anthropic":
+          models = await fetchAnthropicModels(apiKey);
+          break;
+        case "google":
+          models = await fetchGoogleModels(apiKey);
+          break;
+        case "groq":
+          models = await fetchOpenAICompatModels(
+            "https://api.groq.com/openai/v1/models", apiKey,
+            (m) => m.active !== false && (m.context_window || 0) > 1000
+          );
+          break;
+        case "openrouter":
+          models = await fetchOpenAICompatModels(
+            "https://openrouter.ai/api/v1/models", apiKey
+          );
+          break;
+      }
+    } catch { /* return empty */ }
+
+    if (models.length) modelCache[cacheKey] = models;
+    return models;
+  }
+
+  async function fetchOpenAIModels(apiKey) {
+    const res = await fetch("https://api.openai.com/v1/models", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json.data || [])
+      .map((m) => m.id)
+      .filter((id) => /^(gpt-|o[1-9]|chatgpt-)/.test(id))
+      .sort();
+  }
+
+  async function fetchAnthropicModels(apiKey) {
+    const res = await fetch("https://api.anthropic.com/v1/models", {
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json.data || [])
+      .map((m) => m.id)
+      .filter((id) => /^claude-/.test(id))
+      .sort((a, b) => b.localeCompare(a)); // newest first
+  }
+
+  async function fetchGoogleModels(apiKey) {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`
+    );
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json.models || [])
+      .filter((m) =>
+        m.supportedGenerationMethods?.includes("generateContent")
+      )
+      .map((m) => m.name.replace("models/", ""))
+      .sort();
+  }
+
+  async function fetchOpenAICompatModels(endpoint, apiKey, filterFn) {
+    const res = await fetch(endpoint, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    let models = json.data || [];
+    if (filterFn) models = models.filter(filterFn);
+    return models.map((m) => m.id).sort();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Summary display panel
+  // ---------------------------------------------------------------------------
+
+  function displaySummaryPanel(markdown) {
+    document.getElementById("ytp-summary-panel")?.remove();
+
+    const panel = document.createElement("div");
+    panel.id = "ytp-summary-panel";
+
+    const header = document.createElement("div");
+    header.className = "ytp-summary-header";
+    header.innerHTML = "<h3>AI Summary</h3>";
+
+    const headerActions = document.createElement("div");
+    headerActions.style.cssText = "display:flex;gap:4px;align-items:center;";
+
+    const copySvg = '<svg viewBox="0 0 24 24"><path d="M16 1H4C2.9 1 2 1.9 2 3v14h2V3h12V1zm3 4H8C6.9 5 6 5.9 6 7v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
+    const checkSvg = '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>';
+
+    const copyIconBtn = document.createElement("button");
+    copyIconBtn.className = "ytp-summary-close";
+    safeSetSVG(copyIconBtn, copySvg);
+    copyIconBtn.title = "Copy summary as Markdown";
+    copyIconBtn.setAttribute("aria-label", "Copy summary as Markdown");
+    copyIconBtn.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(markdown);
+      safeSetSVG(copyIconBtn, checkSvg);
+      setTimeout(() => { safeSetSVG(copyIconBtn, copySvg); }, 1500);
+    });
+
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "ytp-summary-close";
+    closeBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>';
+    closeBtn.setAttribute("aria-label", "Close summary");
+    closeBtn.addEventListener("click", () => panel.remove());
+
+    headerActions.append(copyIconBtn, closeBtn);
+    header.appendChild(headerActions);
+
+    const content = document.createElement("div");
+    content.className = "ytp-summary-content";
+    safeSetHTML(content, renderMarkdownToHtml(markdown));
+
+    panel.append(header, content);
+
+    // Insert into #primary so it spans full width above recommendations
+    const primary = document.querySelector("#primary, #primary-inner");
+    const below = document.querySelector("#below");
+    if (primary && below && below.parentNode === primary) {
+      primary.insertBefore(panel, below);
+    } else if (below) {
+      below.insertBefore(panel, below.firstChild);
+    } else if (primary) {
+      primary.appendChild(panel);
+    }
+
+    // Collapse if content is tall
+    requestAnimationFrame(() => {
+      if (content.scrollHeight > 500) {
+        content.classList.add("ytp-collapsed");
+
+        const expandBtn = document.createElement("button");
+        expandBtn.className = "ytp-expand-btn";
+        expandBtn.textContent = "Show full summary";
+        expandBtn.addEventListener("click", () => {
+          const isCollapsed = content.classList.toggle("ytp-collapsed");
+          expandBtn.textContent = isCollapsed
+            ? "Show full summary"
+            : "Show less";
+        });
+        content.insertAdjacentElement("afterend", expandBtn);
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Full-featured Markdown → HTML renderer
+  // ---------------------------------------------------------------------------
+
+  function escapeHtml(text) {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function inlineFormat(text) {
+    return text
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/!\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%">')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+      .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
+      .replace(/___(.+?)___/g, "<strong><em>$1</em></strong>")
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/__(.+?)__/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+      .replace(/_([^_]+)_/g, "<em>$1</em>")
+      .replace(/~~(.+?)~~/g, "<del>$1</del>");
+  }
+
+  function parseTableRow(line) {
+    return line
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .split("|")
+      .map((c) => c.trim());
+  }
+
+  function isTableSeparator(line) {
+    return /^\|?(\s*:?-{2,}:?\s*\|)+\s*:?-{2,}:?\s*\|?$/.test(line);
+  }
+
+  function renderMarkdownToHtml(md) {
+    const lines = md.split("\n");
+    const result = [];
+    let i = 0;
+
+    function closeList() {
+      if (listStack.length) {
+        while (listStack.length) result.push(`</${listStack.pop()}>`);
+      }
+    }
+
+    const listStack = [];
+    let inCodeBlock = false;
+    let codeLang = "";
+    const codeLines = [];
+    let inBlockquote = false;
+    const bqLines = [];
+
+    while (i < lines.length) {
+      const line = lines[i];
+
+      // ── Code blocks ──
+      if (line.startsWith("```")) {
+        if (inCodeBlock) {
+          result.push(
+            `<pre><code${codeLang ? ` class="language-${codeLang}"` : ""}>${codeLines.splice(0).join("\n")}</code></pre>`
+          );
+          inCodeBlock = false;
+          codeLang = "";
+        } else {
+          closeList();
+          if (inBlockquote) {
+            result.push(renderMarkdownToHtml(bqLines.splice(0).join("\n")));
+            result.push("</blockquote>");
+            inBlockquote = false;
+          }
+          inCodeBlock = true;
+          codeLang = line.slice(3).trim();
+        }
+        i++;
+        continue;
+      }
+      if (inCodeBlock) {
+        codeLines.push(escapeHtml(line));
+        i++;
+        continue;
+      }
+
+      // ── Blockquotes ──
+      if (/^>\s?/.test(line)) {
+        closeList();
+        if (!inBlockquote) {
+          result.push("<blockquote>");
+          inBlockquote = true;
+        }
+        bqLines.push(line.replace(/^>\s?/, ""));
+        i++;
+        continue;
+      } else if (inBlockquote) {
+        result.push(renderMarkdownToHtml(bqLines.splice(0).join("\n")));
+        result.push("</blockquote>");
+        inBlockquote = false;
+      }
+
+      // ── Horizontal rules ──
+      if (/^([-*_]){3,}\s*$/.test(line.trim())) {
+        closeList();
+        result.push("<hr>");
+        i++;
+        continue;
+      }
+
+      // ── Tables ──
+      if (
+        line.includes("|") &&
+        i + 1 < lines.length &&
+        isTableSeparator(lines[i + 1])
+      ) {
+        closeList();
+        const headers = parseTableRow(line);
+        const sepCells = parseTableRow(lines[i + 1]);
+        const aligns = sepCells.map((c) => {
+          if (c.startsWith(":") && c.endsWith(":")) return "center";
+          if (c.endsWith(":")) return "right";
+          return "left";
+        });
+        i += 2;
+
+        let table = "<table><thead><tr>";
+        for (let h = 0; h < headers.length; h++) {
+          const a = aligns[h] || "left";
+          table += `<th style="text-align:${a}">${inlineFormat(escapeHtml(headers[h]))}</th>`;
+        }
+        table += "</tr></thead><tbody>";
+
+        while (i < lines.length && lines[i].includes("|")) {
+          const cells = parseTableRow(lines[i]);
+          table += "<tr>";
+          for (let c = 0; c < headers.length; c++) {
+            const a = aligns[c] || "left";
+            const val = cells[c] != null ? cells[c] : "";
+            table += `<td style="text-align:${a}">${inlineFormat(escapeHtml(val))}</td>`;
+          }
+          table += "</tr>";
+          i++;
+        }
+        table += "</tbody></table>";
+        result.push(table);
+        continue;
+      }
+
+      const escaped = escapeHtml(line);
+
+      // ── Headers ──
+      const headerMatch = escaped.match(/^(#{1,6})\s+(.+)$/);
+      if (headerMatch) {
+        closeList();
+        const lvl = headerMatch[1].length;
+        result.push(`<h${lvl}>${inlineFormat(headerMatch[2])}</h${lvl}>`);
+        i++;
+        continue;
+      }
+
+      // ── Task list items ──
+      const taskMatch = escaped.match(/^(\s*)[-*]\s+\[([ xX])\]\s+(.+)$/);
+      if (taskMatch) {
+        if (!listStack.length || listStack[listStack.length - 1] !== "ul") {
+          if (listStack.length) result.push(`</${listStack.pop()}>`);
+          result.push("<ul>");
+          listStack.push("ul");
+        }
+        const checked = taskMatch[2] !== " " ? " checked disabled" : " disabled";
+        result.push(
+          `<li><input type="checkbox"${checked}> ${inlineFormat(taskMatch[3])}</li>`
+        );
+        i++;
+        continue;
+      }
+
+      // ── Unordered list ──
+      if (/^\s*[-*+]\s+/.test(escaped)) {
+        if (!listStack.length || listStack[listStack.length - 1] !== "ul") {
+          if (listStack.length) result.push(`</${listStack.pop()}>`);
+          result.push("<ul>");
+          listStack.push("ul");
+        }
+        result.push(
+          `<li>${inlineFormat(escaped.replace(/^\s*[-*+]\s+/, ""))}</li>`
+        );
+        i++;
+        continue;
+      }
+
+      // ── Ordered list ──
+      const olMatch = escaped.match(/^\s*\d+[.)]\s+(.+)$/);
+      if (olMatch) {
+        if (!listStack.length || listStack[listStack.length - 1] !== "ol") {
+          if (listStack.length) result.push(`</${listStack.pop()}>`);
+          result.push("<ol>");
+          listStack.push("ol");
+        }
+        result.push(`<li>${inlineFormat(olMatch[1])}</li>`);
+        i++;
+        continue;
+      }
+
+      // Close any open list before non-list content
+      closeList();
+
+      // ── Blank lines ──
+      if (!escaped.trim()) {
+        i++;
+        continue;
+      }
+
+      // ── Paragraph ──
+      result.push(`<p>${inlineFormat(escaped)}</p>`);
+      i++;
+    }
+
+    // Cleanup
+    closeList();
+    if (inBlockquote) {
+      result.push(renderMarkdownToHtml(bqLines.splice(0).join("\n")));
+      result.push("</blockquote>");
+    }
+    if (inCodeBlock) {
+      result.push(
+        `<pre><code>${codeLines.splice(0).join("\n")}</code></pre>`
+      );
+    }
+
+    return result.join("\n");
   }
 
   // ---------------------------------------------------------------------------
@@ -714,12 +1771,32 @@
       lastSize = segmentsMap.size;
     }
 
+    // Close the transcript panel we opened
+    closeTranscriptPanel();
+
     return Array.from(segmentsMap.values()).map((d) => ({
       transcriptSegmentRenderer: {
         startTimeText: { simpleText: d.timestamp },
         snippet: { runs: [{ text: d.text }] },
       },
     }));
+  }
+
+  function closeTranscriptPanel() {
+    // Try clicking the close button on the transcript engagement panel
+    const closeSelectors = [
+      'ytd-engagement-panel-section-list-renderer[target-id*="transcript" i] #visibility-button button',
+      'ytd-engagement-panel-section-list-renderer[visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"] #visibility-button button',
+      'ytd-engagement-panel-title-header-renderer button[aria-label*="Close" i]',
+      'ytd-engagement-panel-title-header-renderer button[aria-label*="close" i]',
+    ];
+    for (const sel of closeSelectors) {
+      const btn = document.querySelector(sel);
+      if (btn) {
+        btn.click();
+        return;
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -778,6 +1855,7 @@
     lastUrl = location.href;
 
     document.getElementById(CONTAINER_ID)?.remove();
+    document.getElementById("ytp-summary-panel")?.remove();
     if (protectionObserver) {
       protectionObserver.disconnect();
       protectionObserver = null;

@@ -1,10 +1,17 @@
 {
   "manifest_version": 3,
-  "name": "YT Transcript Pro",
-  "version": "1.0.0",
-  "description": "Copy YouTube video transcripts as plain text or Markdown. Supports light and dark mode.",
+  "name": "YT Transcript & Summary",
+  "version": "1.0.1",
+  "description": "Copy YouTube video transcripts as plain text or Markdown, and generate AI-powered summaries. Supports light and dark mode.",
   "permissions": ["storage", "clipboardWrite"],
-  "host_permissions": ["*://*.youtube.com/*"],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "*://api.openai.com/*",
+    "*://api.anthropic.com/*",
+    "*://generativelanguage.googleapis.com/*",
+    "*://api.groq.com/*",
+    "*://openrouter.ai/*"
+  ],
   "content_scripts": [
     {
       "matches": ["*://*.youtube.com/*"],
@@ -20,7 +27,11 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "yt-transcript-pro@leopoldmac"
+      "id": "yt-transcript-summary@felixleopold",
+      "data_collection_permissions": {
+        "required": ["websiteContent"],
+        "optional": ["technicalAndInteraction"]
+      }
     }
   }
 }
