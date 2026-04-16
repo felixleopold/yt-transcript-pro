@@ -18,16 +18,6 @@ Built on top of [YouTube Transcript Copier](https://addons.mozilla.org/en-US/fir
 - Settings persist via `chrome.storage.sync` (falls back to `localStorage`)
 - Resilient to YouTube's SPA navigation
 
-## Settings
-
-| Option | Default | Description |
-|---|---|---|
-| Include video title | ✅ | Prepends the video title |
-| Include video URL | ✅ | Adds a link to the video |
-| Include timestamps | ✅ | Shows `(0:00)` before each line |
-| Single paragraph | ❌ | Joins all text into one block |
-| Copy as Markdown | ❌ | Formats output as Markdown |
-
 ## Installation (development)
 
 1. Open `about:debugging#/runtime/this-firefox` in Firefox
